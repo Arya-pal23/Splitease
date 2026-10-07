@@ -29,20 +29,20 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const login = async (name, password) => {
+  const login = async (name) => {
     const data = await fetchApi('/auth/login', {
       method: 'POST',
-      body: JSON.stringify({ name, password })
+      body: JSON.stringify({ name })
     });
     localStorage.setItem('splitease_token', data.token);
     setUser(data.user);
     return data.user;
   };
 
-  const signup = async (name, email, username, password) => {
+  const signup = async (name) => {
     const data = await fetchApi('/auth/signup', {
       method: 'POST',
-      body: JSON.stringify({ name, email, username, password })
+      body: JSON.stringify({ name })
     });
     localStorage.setItem('splitease_token', data.token);
     setUser(data.user);

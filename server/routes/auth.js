@@ -1,70 +1,67 @@
 const express = require('express');
 const router = express.Router();
-const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { db } = require('../db/schema');
 const { authenticateToken, JWT_SECRET } = require('../middleware/auth');
 
 const AVATAR_COLORS = ['#0D9488', '#3B82F6', '#EC4899', '#8B5CF6', '#F59E0B', '#10B981', '#6366F1'];
 
-// Signup
-router.post('/signup', (req, res) => {
-  const { name, email, password } = req.body;
-
-  if (!name || !name.trim() || !password) {
-    return res.status(400).json({ error: 'Name and password are required' });
+// Login or auto-create by name only
+router.post('/login', (req, res) => {
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Name is required' });
   }
 
   const cleanName = name.trim();
   const cleanUsername = cleanName.toLowerCase().replace(/\s+/g, '');
-  const userEmail = (email || `${cleanUsername}@splitease.local`).toLowerCase().trim();
 
-  // Check if exists
-  const existing = db.prepare('SELECT id FROM users WHERE LOWER(name) = ? OR LOWER(username) = ?').get(cleanName.toLowerCase(), cleanUsername);
+  // Check if user already exists
+  let user = db.prepare('SELECT id, name, email, username, avatar_color FROM users WHERE LOWER(name) = ? OR LOWER(username) = ?')
+    .get(cleanName.toLowerCase(), cleanUsername);
+
+  // If not found, auto-create
+  if (!user) {
+    const color = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
+    const userEmail = `${cleanUsername}@splitease.local`;
+    const result = db.prepare(
+      'INSERT INTO users (name, email, username, password, avatar_color) VALUES (?, ?, ?, ?, ?)'
+    ).run(cleanName, userEmail, cleanUsername, '', color);
+    user = { id: result.lastInsertRowid, name: cleanName, email: userEmail, username: cleanUsername, avatar_color: color };
+  }
+
+  const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
+  res.json({ token, user });
+});
+
+// Signup (same as login — name only, auto-creates)
+router.post('/signup', (req, res) => {
+  const { name } = req.body;
+  if (!name || !name.trim()) {
+    return res.status(400).json({ error: 'Name is required' });
+  }
+
+  const cleanName = name.trim();
+  const cleanUsername = cleanName.toLowerCase().replace(/\s+/g, '');
+
+  const existing = db.prepare('SELECT id FROM users WHERE LOWER(name) = ? OR LOWER(username) = ?')
+    .get(cleanName.toLowerCase(), cleanUsername);
   if (existing) {
     return res.status(400).json({ error: 'A user with this name already exists. Please log in.' });
   }
 
-  const hash = bcrypt.hashSync(password, 10);
   const color = AVATAR_COLORS[Math.floor(Math.random() * AVATAR_COLORS.length)];
-
+  const userEmail = `${cleanUsername}@splitease.local`;
   const result = db.prepare(
     'INSERT INTO users (name, email, username, password, avatar_color) VALUES (?, ?, ?, ?, ?)'
-  ).run(cleanName, userEmail, cleanUsername, hash, color);
+  ).run(cleanName, userEmail, cleanUsername, '', color);
 
   const user = { id: result.lastInsertRowid, name: cleanName, email: userEmail, username: cleanUsername, avatar_color: color };
   const token = jwt.sign(user, JWT_SECRET, { expiresIn: '7d' });
-
   res.status(201).json({ token, user });
 });
 
-// Login by Name or Username or Email
-router.post('/login', (req, res) => {
-  const { name, email, password } = req.body;
-  const identifier = (name || email || '').toLowerCase().trim();
-
-  if (!identifier || !password) {
-    return res.status(400).json({ error: 'Name and password are required' });
-  }
-
-  const user = db.prepare('SELECT * FROM users WHERE LOWER(name) = ? OR LOWER(username) = ? OR LOWER(email) = ?').get(identifier, identifier, identifier);
-  if (!user || !bcrypt.compareSync(password, user.password)) {
-    return res.status(401).json({ error: 'Invalid name or password' });
-  }
-
-  const userPayload = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    username: user.username,
-    avatar_color: user.avatar_color
-  };
-  const token = jwt.sign(userPayload, JWT_SECRET, { expiresIn: '7d' });
-
-  res.json({ token, user: userPayload });
-});
-
-// Demo Login (Quick switch for dev/demo)
+// Demo Login
 router.post('/demo-login', (req, res) => {
   const { userId } = req.body;
   const user = db.prepare('SELECT id, name, email, username, avatar_color FROM users WHERE id = ?').get(userId || 1);
@@ -84,7 +81,7 @@ router.get('/me', authenticateToken, (req, res) => {
   res.json(user);
 });
 
-// Get all demo users for quick switcher
+// Get all users for quick switcher
 router.get('/demo-users', (req, res) => {
   const users = db.prepare('SELECT id, name, email, username, avatar_color FROM users').all();
   res.json(users);
